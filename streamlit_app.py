@@ -507,9 +507,56 @@ def main():
                     if cluster != -1:  # Ignore noise points in DBSCAN
                         cluster_data = cluster_df[cluster_df['Cluster'] == cluster]
                         st.write(f"**Cluster {cluster}**: {len(cluster_data)} samples")
+                        
+                        # Calculate cluster statistics
+                        cluster_stats = cluster_data.mean()
+                        
+                        # Medical interpretation based on cluster statistics
+                        st.write("**Profil Médical du Cluster:**")
+                        
+                        if cluster == 0:
+                            st.write("""
+                            **Cluster 0 (Risque Élevé) Profil:**
+                            - Jeunes adultes (28 ans en moyenne) avec obésité marquée (BMI 37.4)
+                            - Hyperglycémie (Glucose 131) + hyperinsulinémie (180 μU/mL)
+                            - Épaisseur cutanée élevée (indicateur de graisse sous-cutanée)
+                            
+                            **Risque Diabète**: ⚠️ Très élevé
+                            *Combinaison d'obésité, résistance à l'insuline et glucose élevé*
+                            """)
+                        elif cluster == 1:
+                            st.write("""
+                            **Cluster 1 (Risque Modéré-Age) Profil:**
+                            - Patients d'âge mûr (47 ans) avec antécédents de grossesses multiples (7.75)
+                            - Glycémie élevée (136.7) mais BMI moins critique (32.9)
+                            - Pression artérielle légèrement élevée (78 mmHg)
+                            
+                            **Risque Diabète**: 🔸 Modéré
+                            *Facteurs âge + hypertension, mais moins de marqueurs métaboliques extrêmes*
+                            """)
+                        elif cluster == 2:
+                            st.write("""
+                            **Cluster 2 (Risque Faible) Profil:**
+                            - Jeunes (27 ans) avec paramètres normaux
+                            - Glucose 104 (normal)
+                            - BMI 27.9 (léger surpoids)
+                            - Insulinémie normale (97 μU/mL)
+                            
+                            **Risque Diabète**: ✅ Faible
+                            *Aucun marqueur alarmant*
+                            """)
+                        
+                        # Display cluster statistics
+                        st.write("**Statistiques du Cluster:**")
+                        stats_df = pd.DataFrame({
+                            'Moyenne': cluster_stats,
+                            'Écart-type': cluster_data.std()
+                        }).round(2)
+                        st.write(stats_df)
+                        
                         if 'Outcome' in df.columns:
                             diabetes_rate = cluster_data['Outcome'].mean() * 100
-                            st.write(f"Diabetes rate in cluster {cluster}: {diabetes_rate:.1f}%")
+                            st.write(f"**Taux de Diabète dans le cluster**: {diabetes_rate:.1f}%")
                 
                 # Download clustered data
                 csv = cluster_df.to_csv(index=False)
@@ -551,16 +598,15 @@ def main():
             input_data = np.array([[pregnancies, glucose, blood_pressure, skin_thickness,
                                   insulin, bmi, diabetes_pedigree, age]])
             
-            # Scale input
+            # Scale input for supervised models
             try:
                 input_scaled = scaler.transform(input_data)
             except Exception as e:
                 st.error(f"Error scaling input data: {str(e)}")
                 return
             
-            # Make predictions with all models
-            st.subheader("Prediction Results")
-            
+            # Supervised Learning Predictions
+            st.subheader("Supervised Learning Predictions")
             col1, col2, col3 = st.columns(3)
             
             for i, (model_name, model) in enumerate(models.items()):
@@ -590,6 +636,54 @@ def main():
                         if risk_probability != "N/A":
                             st.write(f"Risk Probability: {risk_probability:.1f}%")
             
+            # Unsupervised Learning Analysis
+            st.subheader("Unsupervised Learning Analysis")
+            
+            if 'Unsupervised Scaler' in unsupervised_models:
+                scaler_unsup = unsupervised_models['Unsupervised Scaler']
+                input_scaled_unsup = scaler_unsup.transform(input_data)
+            else:
+                scaler_unsup = StandardScaler()
+                input_scaled_unsup = scaler_unsup.fit_transform(input_data)
+            
+            # PCA Analysis
+            if 'PCA' in unsupervised_models:
+                pca_model = unsupervised_models['PCA']
+                input_pca = pca_model.transform(input_scaled_unsup)
+                
+                st.write("**PCA Analysis**")
+                st.write(f"First Principal Component: {input_pca[0][0]:.3f}")
+                st.write(f"Second Principal Component: {input_pca[0][1]:.3f}")
+            
+            # Clustering Analysis
+            clustering_results = {}
+            for model_name in ['KMeans', 'DBSCAN']:
+                if model_name in unsupervised_models:
+                    clustering_model = unsupervised_models[model_name]
+                    if model_name == 'DBSCAN':
+                        # For DBSCAN, we need to fit_predict on the combined data
+                        # First, get the original data
+                        if 'df' in st.session_state:
+                            original_data = st.session_state.df.drop('Outcome', axis=1) if 'Outcome' in st.session_state.df.columns else st.session_state.df
+                            # Combine original data with new input
+                            combined_data = np.vstack([original_data, input_scaled_unsup])
+                            # Get clusters for all data
+                            all_clusters = clustering_model.fit_predict(combined_data)
+                            # Get the cluster for our input (last point)
+                            cluster = all_clusters[-1]
+                        else:
+                            st.warning("No data available for DBSCAN clustering. Please load data first.")
+                            continue
+                    else:
+                        # For KMeans, we can use predict
+                        cluster = clustering_model.predict(input_scaled_unsup)[0]
+                    clustering_results[model_name] = cluster
+            
+            if clustering_results:
+                st.write("**Clustering Results**")
+                for model_name, cluster in clustering_results.items():
+                    st.write(f"{model_name} Cluster: {cluster}")
+            
             # Additional insights
             st.subheader("Health Insights")
             
@@ -608,6 +702,29 @@ def main():
                     st.write(insight)
             else:
                 st.write("🟢 No major risk factors detected in the input values.")
+            
+            # Combined Analysis
+            st.subheader("Combined Analysis")
+            
+            # Count the number of models predicting high risk
+            high_risk_count = sum(1 for model in models.values() if model.predict(input_scaled)[0] == 1)
+            total_models = len(models)
+            
+            st.write(f"**Supervised Models Consensus**: {high_risk_count}/{total_models} models predict high risk")
+            
+            if clustering_results:
+                st.write("**Unsupervised Analysis**:")
+                for model_name, cluster in clustering_results.items():
+                    st.write(f"- {model_name} places the patient in cluster {cluster}")
+            
+            # Final recommendation
+            st.subheader("Final Recommendation")
+            if high_risk_count > total_models/2:
+                st.error("⚠️ Multiple models suggest high risk of diabetes. Please consult a healthcare professional.")
+            elif high_risk_count > 0:
+                st.warning("⚠️ Some models suggest potential risk. Consider consulting a healthcare professional.")
+            else:
+                st.success("✅ All models suggest low risk. Continue maintaining a healthy lifestyle.")
     
     elif page == "📈 Model Comparison":
         st.markdown('<h2 class="sub-header">Model Performance Comparison</h2>', unsafe_allow_html=True)
