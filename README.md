@@ -41,7 +41,7 @@ streamlit run streamlit_app.py
 ```
 diabetes-prediction-dashboard/
 ├── data/
-│   ├── diabetes.csv
+│   ├── cleaned_diabetes.csv
 │   └── standard_scaler.pkl
 ├── models/
 │   ├── supervised/
